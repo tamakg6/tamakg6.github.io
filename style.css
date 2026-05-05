@@ -284,7 +284,11 @@ body, html {
 #messages::-webkit-scrollbar-track { background: transparent; }
 #messages::-webkit-scrollbar-thumb { background: #ddd; border-radius: 4px; }
 
-/* 日付区切り線 */
+/* 管理者ログパネル */
+.log-line  { margin: 1px 0; }
+.log-info  { color: #7ecfff; }
+.log-warn  { color: #ffd166; }
+.log-error { color: #ff6b6b; }
 .date-separator {
     display: flex;
     align-items: center;
