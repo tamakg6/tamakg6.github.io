@@ -1,3 +1,5 @@
+// app.js の一番上あたりに追加
+const VAPID_PUBLIC_KEY = "BFEwXt88_nfIUfG1Hs2BSH_4MVirAAZBnPt6PDisxgeJtokPTG6-czTtzdkyfivc5F2gMerCoNk1bDy4621eXoM";
 const API_URL = "https://cha-t.tama-kg-6.workers.dev";
 let currentUser      = JSON.parse(localStorage.getItem('chaT_user')) || null;
 let currentChannelId = "general";
@@ -180,24 +182,23 @@ async function completePushSubscription() {
   try {
     const reg = await navigator.serviceWorker.ready;
 
-    // VAPID 公開鍵を取得
-    const keyRes = await fetch(`${API_URL}/vapid-public-key`);
-    const { publicKey } = await keyRes.json();
-    adminLog('VAPID公開鍵: ' + (publicKey ? '取得OK (' + publicKey.slice(0, 20) + '...)' : '★取得失敗'), publicKey ? 'info' : 'error');
-    if (!publicKey) return;
+    // fetchで取得せず、直接変数を使う
+    const publicKey = VAPID_PUBLIC_KEY; 
+    adminLog('VAPID公開鍵を使用中...');
 
-    // 購読
     let sub = await reg.pushManager.getSubscription();
-    if (!sub) {
-      adminLog('新規Push購読を作成中...');
-      sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey),
-      });
-      adminLog('新規購読作成完了');
-    } else {
-      adminLog('既存のPush購読を使用');
+    
+    // 既存の購読がある場合、鍵が一致しない可能性があるので一度解除して作り直すのが確実
+    if (sub) {
+        await sub.unsubscribe();
+        adminLog('古い購読をクリアしました');
     }
+
+    adminLog('新規Push購読を作成中...');
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey), // ここで変換
+    });
     pushSubscription = sub;
     adminLog('エンドポイント: ' + sub.endpoint.slice(0, 50) + '...');
 
