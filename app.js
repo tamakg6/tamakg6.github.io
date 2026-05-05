@@ -14,8 +14,8 @@ let pushSubscription = null;
 // 管理者ログパネル
 // ===========================
 function adminLog(msg, type = 'info') {
-  if (type === 'error') console.error(msg);
-  else console.log(msg);
+  if (type === 'error') console.error('[chaT]', msg);
+  else console.log('[chaT]', msg);
 
   if (!currentUser || currentUser.user_id !== 'admin') return;
   const panel = document.getElementById('admin-log-panel');
@@ -98,7 +98,17 @@ function showApp() {
     adminLog('管理者ログパネル起動');
   }
 
-  setupPush();
+  // ★ iOSでは自動で許可を求めずSWだけ登録する
+  setupPushSW();
+
+  // すでに許可済みなら自動で購読を完了させる
+  if (Notification.permission === 'granted') {
+    completePushSubscription();
+  } else {
+    // 通知ボタンの状態を更新
+    updatePushBtn();
+  }
+
   renderUserList();
   setInterval(updatePolling, 3000);
   setInterval(pollBadges, 10000);
@@ -115,30 +125,68 @@ function showApp() {
 }
 
 // ===========================
-// Service Worker + Push 購読
+// Service Worker 登録（許可は求めない）
 // ===========================
-async function setupPush() {
+async function setupPushSW() {
+  if (!('serviceWorker' in navigator)) {
+    adminLog('Service Worker非対応ブラウザ', 'warn');
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.register('./sw.js');
+    await navigator.serviceWorker.ready;
+    adminLog('SW準備完了 scope: ' + reg.scope);
+  } catch (e) {
+    adminLog('SW登録失敗: ' + e.message, 'error');
+  }
+}
+
+// ===========================
+// ★ ユーザーのタップで許可を求める（iOS対応）
+// ===========================
+async function enablePushManually() {
+  adminLog('通知許可リクエスト開始（ユーザー操作）');
+
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     adminLog('このブラウザはWeb Pushに非対応です', 'warn');
+    alert("このブラウザは通知に対応していません。");
     return;
   }
 
   try {
-    const reg = await navigator.serviceWorker.register('./sw.js');
-    adminLog('SW登録完了 scope: ' + reg.scope);
-
-    await navigator.serviceWorker.ready;
-    adminLog('SW準備完了');
-
+    // ★ ユーザーのタップに応じて許可を求める（iOSの要件）
     const permission = await Notification.requestPermission();
     adminLog('通知許可状態: ' + permission, permission === 'granted' ? 'info' : 'warn');
-    if (permission !== 'granted') return;
 
+    if (permission !== 'granted') {
+      alert("通知が許可されませんでした。\niPadの「設定」→「chaT」→「通知」からオンにしてください。");
+      return;
+    }
+
+    await completePushSubscription();
+    alert("✅ 通知が有効になりました！");
+    updatePushBtn();
+
+  } catch (e) {
+    adminLog('通知許可エラー: ' + e.message, 'error');
+    alert("エラーが発生しました: " + e.message);
+  }
+}
+
+// ===========================
+// Push 購読を完了させる
+// ===========================
+async function completePushSubscription() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+
+    // VAPID 公開鍵を取得
     const keyRes = await fetch(`${API_URL}/vapid-public-key`);
     const { publicKey } = await keyRes.json();
     adminLog('VAPID公開鍵: ' + (publicKey ? '取得OK (' + publicKey.slice(0, 20) + '...)' : '★取得失敗'), publicKey ? 'info' : 'error');
     if (!publicKey) return;
 
+    // 購読
     let sub = await reg.pushManager.getSubscription();
     if (!sub) {
       adminLog('新規Push購読を作成中...');
@@ -153,6 +201,7 @@ async function setupPush() {
     pushSubscription = sub;
     adminLog('エンドポイント: ' + sub.endpoint.slice(0, 50) + '...');
 
+    // サーバーに登録
     const subRes = await fetch(`${API_URL}/subscribe`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -164,11 +213,30 @@ async function setupPush() {
     adminLog('サーバー登録: ' + (subRes.ok ? '✅ 成功' : '★ 失敗 status=' + subRes.status), subRes.ok ? 'info' : 'error');
 
   } catch (e) {
-    adminLog('Push設定エラー: ' + e.message, 'error');
+    adminLog('Push購読エラー: ' + e.message, 'error');
   }
 }
 
-// base64url → Uint8Array（applicationServerKey 用）
+// 通知ボタンの表示を更新
+function updatePushBtn() {
+  const btn = document.getElementById('push-btn');
+  if (!btn) return;
+  if (Notification.permission === 'granted') {
+    btn.textContent = '🔔 通知：有効';
+    btn.style.color = '#5b8dee';
+    btn.style.pointerEvents = 'none';
+  } else if (Notification.permission === 'denied') {
+    btn.textContent = '🔕 通知：ブロック中';
+    btn.style.color = '#e05252';
+    btn.style.pointerEvents = 'none';
+  } else {
+    btn.textContent = '🔔 通知を有効にする';
+    btn.style.color = '';
+    btn.style.pointerEvents = '';
+  }
+}
+
+// base64url → Uint8Array
 function urlBase64ToUint8Array(base64) {
   const pad = '='.repeat((4 - base64.length % 4) % 4);
   const b64 = (base64 + pad).replace(/-/g, '+').replace(/_/g, '/');
